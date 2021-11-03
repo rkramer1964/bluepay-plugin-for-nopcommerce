@@ -2,11 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Nop.Core;
 using Nop.Core.Domain.Orders;
 using Nop.Core.Domain.Payments;
-using Nop.Core.Plugins;
 using Nop.Plugin.Payments.BluePay.Controllers;
 using Nop.Plugin.Payments.BluePay.Models;
 using Nop.Plugin.Payments.BluePay.Validators;
@@ -15,6 +15,7 @@ using Nop.Services.Customers;
 using Nop.Services.Directory;
 using Nop.Services.Localization;
 using Nop.Services.Payments;
+using Nop.Services.Plugins;
 
 namespace Nop.Plugin.Payments.BluePay
 {
@@ -32,7 +33,8 @@ namespace Nop.Plugin.Payments.BluePay
         private readonly IPaymentService _paymentService;
         private readonly IWebHelper _webHelper;
         private readonly ILocalizationService _localizationService;
-
+        private readonly ICountryService _countryService;
+        private readonly IStateProvinceService _stateProvinceService;
         #endregion
 
         #region Ctor
@@ -43,7 +45,9 @@ namespace Nop.Plugin.Payments.BluePay
             ISettingService settingService,
             IPaymentService paymentService,
             IWebHelper webHelper,
-            ILocalizationService localizationService)
+            ILocalizationService localizationService,
+            ICountryService countryService,
+            IStateProvinceService stateProvinceService)
         {
             this._bluePayPaymentSettings = bluePayPaymentSettings;
             this._currencyService = currencyService;
@@ -52,6 +56,8 @@ namespace Nop.Plugin.Payments.BluePay
             this._paymentService = paymentService;
             this._webHelper = webHelper;
             this._localizationService = localizationService;
+            this._countryService = countryService;
+            this._stateProvinceService = stateProvinceService;
         }
 
         #endregion
@@ -119,14 +125,6 @@ namespace Nop.Plugin.Payments.BluePay
             get { return false; }
         }
 
-        /// <summary>
-        /// Gets a payment method description that will be displayed on checkout pages in the public store
-        /// </summary>
-        public string PaymentMethodDescription
-        {
-            get { return _localizationService.GetResource("Plugins.Payments.BluePay.PaymentMethodDescription"); }
-        }
-
         #endregion
 
         #region Utilities
@@ -136,13 +134,13 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="amount">Amount</param>
         /// <returns>Amount in the USD currency</returns>
-        private decimal GetUsdAmount(decimal amount)
+        private async Task<decimal> GetUsdAmount(decimal amount)
         {
-            var usd = _currencyService.GetCurrencyByCode("USD");
+            var usd = await _currencyService.GetCurrencyByCodeAsync("USD");
             if (usd == null)
                 throw new Exception("USD currency could not be loaded");
 
-            return _currencyService.ConvertFromPrimaryStoreCurrency(amount, usd);
+            return await _currencyService.ConvertFromPrimaryStoreCurrencyAsync(amount, usd);
         }
 
         #endregion
@@ -154,11 +152,15 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="processPaymentRequest">Payment info required for an order processing</param>
         /// <returns>Process payment result</returns>
-        public ProcessPaymentResult ProcessPayment(ProcessPaymentRequest processPaymentRequest)
+        public async Task<ProcessPaymentResult> ProcessPaymentAsync(ProcessPaymentRequest processPaymentRequest)
         {
-            var customer = _customerService.GetCustomerById(processPaymentRequest.CustomerId);
+            var customer = await _customerService.GetCustomerByIdAsync(processPaymentRequest.CustomerId);
             if (customer == null)
                 throw new Exception("Customer cannot be loaded");
+
+            var billAddress = await _customerService.GetCustomerBillingAddressAsync(customer);
+            var country = await _countryService.GetCountryByAddressAsync(billAddress);
+            var stateProvince = await _stateProvinceService.GetStateProvinceByAddressAsync(billAddress);
 
             var result = new ProcessPaymentResult();
             var bpManager = new BluePayManager
@@ -170,20 +172,20 @@ namespace Nop.Plugin.Payments.BluePay
                 CustomerIP = _webHelper.GetCurrentIpAddress(),
                 CustomId1 = customer.Id.ToString(),
                 CustomId2 = customer.CustomerGuid.ToString(),
-                FirstName = customer.BillingAddress.FirstName,
-                LastName = customer.BillingAddress.LastName,
-                Email = customer.BillingAddress.Email,
-                Address1 = customer.BillingAddress.Address1,
-                Address2 = customer.BillingAddress.Address2,
-                City = customer.BillingAddress.City,
-                Country = customer.BillingAddress.Country?.ThreeLetterIsoCode,
-                Zip = customer.BillingAddress.ZipPostalCode,
-                Phone = customer.BillingAddress.PhoneNumber,
-                State = customer.BillingAddress.StateProvince?.Abbreviation,
+                FirstName = billAddress.FirstName,
+                LastName = billAddress.LastName,
+                Email = billAddress.Email,
+                Address1 = billAddress.Address1,
+                Address2 = billAddress.Address2,
+                City = billAddress.City,
+                Country = country.ThreeLetterIsoCode,
+                Zip = billAddress.ZipPostalCode,
+                Phone = billAddress.PhoneNumber,
+                State = stateProvince.Abbreviation,
                 CardNumber = processPaymentRequest.CreditCardNumber,
                 CardExpire = $"{new DateTime(processPaymentRequest.CreditCardExpireYear, processPaymentRequest.CreditCardExpireMonth, 1):MMyy}",
                 CardCvv2 = processPaymentRequest.CreditCardCvv2,
-                Amount = GetUsdAmount(processPaymentRequest.OrderTotal).ToString("F", new CultureInfo("en-US")),
+                Amount = (await GetUsdAmount(processPaymentRequest.OrderTotal)).ToString("F", new CultureInfo("en-US")),
                 OrderId = processPaymentRequest.OrderGuid.ToString(),
                 InvoiceId = processPaymentRequest.OrderGuid.ToString()
             };
@@ -217,9 +219,9 @@ namespace Nop.Plugin.Payments.BluePay
         /// Post process payment (used by payment gateways that require redirecting to a third-party URL)
         /// </summary>
         /// <param name="postProcessPaymentRequest">Payment info required for an order processing</param>
-        public void PostProcessPayment(PostProcessPaymentRequest postProcessPaymentRequest)
+        public Task PostProcessPaymentAsync(PostProcessPaymentRequest postProcessPaymentRequest)
         {
-            //nothing
+            return Task.CompletedTask;
         }
 
         /// <summary>
@@ -227,7 +229,7 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="capturePaymentRequest">Capture payment request</param>
         /// <returns>Capture payment result</returns>
-        public CapturePaymentResult Capture(CapturePaymentRequest capturePaymentRequest)
+        public async Task<CapturePaymentResult> CaptureAsync(CapturePaymentRequest capturePaymentRequest)
         {
             var result = new CapturePaymentResult();
             var bpManager = new BluePayManager
@@ -237,7 +239,7 @@ namespace Nop.Plugin.Payments.BluePay
                 SecretKey = _bluePayPaymentSettings.SecretKey,
                 IsSandbox = _bluePayPaymentSettings.UseSandbox,
                 MasterId = capturePaymentRequest.Order.AuthorizationTransactionId,
-                Amount = GetUsdAmount(capturePaymentRequest.Order.OrderTotal).ToString("F", new CultureInfo("en-US"))
+                Amount = (await GetUsdAmount(capturePaymentRequest.Order.OrderTotal)).ToString("F", new CultureInfo("en-US"))
             };
 
             bpManager.Capture();
@@ -259,7 +261,7 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="refundPaymentRequest">Request</param>
         /// <returns>Result</returns>
-        public RefundPaymentResult Refund(RefundPaymentRequest refundPaymentRequest)
+        public async Task<RefundPaymentResult> RefundAsync(RefundPaymentRequest refundPaymentRequest)
         {
             var result = new RefundPaymentResult();
             var bpManager = new BluePayManager
@@ -269,7 +271,7 @@ namespace Nop.Plugin.Payments.BluePay
                 SecretKey = _bluePayPaymentSettings.SecretKey,
                 IsSandbox = _bluePayPaymentSettings.UseSandbox,
                 MasterId = refundPaymentRequest.Order.CaptureTransactionId,
-                Amount = refundPaymentRequest.IsPartialRefund ? GetUsdAmount(refundPaymentRequest.AmountToRefund).ToString("F", new CultureInfo("en-US")) : null
+                Amount = refundPaymentRequest.IsPartialRefund ? (await GetUsdAmount(refundPaymentRequest.AmountToRefund)).ToString("F", new CultureInfo("en-US")) : null
             };
 
             bpManager.Refund();
@@ -289,7 +291,7 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="voidPaymentRequest">Request</param>
         /// <returns>Result</returns>
-        public VoidPaymentResult Void(VoidPaymentRequest voidPaymentRequest)
+        public Task<VoidPaymentResult> VoidAsync(VoidPaymentRequest voidPaymentRequest)
         {
             var result = new VoidPaymentResult();
             var bpManager = new BluePayManager
@@ -309,7 +311,7 @@ namespace Nop.Plugin.Payments.BluePay
             else
                 result.AddError(bpManager.Message);
 
-            return result;
+            return Task.FromResult(result);
         }
 
         /// <summary>
@@ -317,12 +319,15 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="processPaymentRequest">Payment info required for an order processing</param>
         /// <returns>Process payment result</returns>
-        public ProcessPaymentResult ProcessRecurringPayment(ProcessPaymentRequest processPaymentRequest)
+        public async Task<ProcessPaymentResult> ProcessRecurringPaymentAsync(ProcessPaymentRequest processPaymentRequest)
         {
-            var customer = _customerService.GetCustomerById(processPaymentRequest.CustomerId);
+            var customer = await _customerService.GetCustomerByIdAsync(processPaymentRequest.CustomerId);
             if (customer == null)
                 throw new Exception("Customer cannot be loaded");
 
+            var billAddress = await _customerService.GetCustomerBillingAddressAsync(customer);
+            var country = await _countryService.GetCountryByAddressAsync(billAddress);
+            var stateProvince = await _stateProvinceService.GetStateProvinceByAddressAsync(billAddress);
             var result = new ProcessPaymentResult();
             var bpManager = new BluePayManager
             {
@@ -333,24 +338,24 @@ namespace Nop.Plugin.Payments.BluePay
                 CustomerIP = _webHelper.GetCurrentIpAddress(),
                 CustomId1 = customer.Id.ToString(),
                 CustomId2 = customer.CustomerGuid.ToString(),
-                FirstName = customer.BillingAddress.FirstName,
-                LastName = customer.BillingAddress.LastName,
-                Email = customer.BillingAddress.Email,
-                Address1 = customer.BillingAddress.Address1,
-                Address2 = customer.BillingAddress.Address2,
-                City = customer.BillingAddress.City,
-                Country = customer.BillingAddress.Country != null ? customer.BillingAddress.Country.ThreeLetterIsoCode : null,
-                Zip = customer.BillingAddress.ZipPostalCode,
-                Phone = customer.BillingAddress.PhoneNumber,
-                State = customer.BillingAddress.StateProvince != null ? customer.BillingAddress.StateProvince.Abbreviation : null,
+                FirstName = billAddress.FirstName,
+                LastName = billAddress.LastName,
+                Email = billAddress.Email,
+                Address1 = billAddress.Address1,
+                Address2 = billAddress.Address2,
+                City = billAddress.City,
+                Country = country != null ? country.ThreeLetterIsoCode : null,
+                Zip = billAddress.ZipPostalCode,
+                Phone = billAddress.PhoneNumber,
+                State = stateProvince != null ? stateProvince.Abbreviation : null,
                 CardNumber = processPaymentRequest.CreditCardNumber,
                 CardExpire = $"{new DateTime(processPaymentRequest.CreditCardExpireYear, processPaymentRequest.CreditCardExpireMonth, 1):MMyy}",
                 CardCvv2 = processPaymentRequest.CreditCardCvv2,
-                Amount = GetUsdAmount(processPaymentRequest.OrderTotal).ToString("F", new CultureInfo("en-US")),
+                Amount = (await GetUsdAmount(processPaymentRequest.OrderTotal)).ToString("F", new CultureInfo("en-US")),
                 OrderId = processPaymentRequest.OrderGuid.ToString(),
                 InvoiceId = processPaymentRequest.OrderGuid.ToString(),
                 DoRebill = "1",
-                RebillAmount = GetUsdAmount(processPaymentRequest.OrderTotal).ToString("F", new CultureInfo("en-US")),
+                RebillAmount = (await GetUsdAmount(processPaymentRequest.OrderTotal)).ToString("F", new CultureInfo("en-US")),
                 RebillCycles = processPaymentRequest.RecurringTotalCycles > 0 ? (processPaymentRequest.RecurringTotalCycles - 1).ToString() : null,
                 RebillFirstDate = $"{processPaymentRequest.RecurringCycleLength} {processPaymentRequest.RecurringCyclePeriod.ToString().TrimEnd('s').ToUpperInvariant()}",
                 RebillExpression = $"{processPaymentRequest.RecurringCycleLength} {processPaymentRequest.RecurringCyclePeriod.ToString().TrimEnd('s').ToUpperInvariant()}"
@@ -379,7 +384,7 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="cancelPaymentRequest">Request</param>
         /// <returns>Result</returns>
-        public CancelRecurringPaymentResult CancelRecurringPayment(CancelRecurringPaymentRequest cancelPaymentRequest)
+        public Task<CancelRecurringPaymentResult> CancelRecurringPaymentAsync(CancelRecurringPaymentRequest cancelPaymentRequest)
         {
             var result = new CancelRecurringPaymentResult();
             var bpManager = new BluePayManager
@@ -395,7 +400,7 @@ namespace Nop.Plugin.Payments.BluePay
             if (!bpManager.IsSuccessfulCancelRecurring)
                 result.AddError(bpManager.Message);
 
-            return result;
+            return Task.FromResult(result);
         }
 
         /// <summary>
@@ -403,9 +408,9 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="order">Order</param>
         /// <returns>Result</returns>
-        public bool CanRePostProcessPayment(Order order)
+        public Task<bool> CanRePostProcessPaymentAsync(Order order)
         {
-            return false;
+            return Task.FromResult(false);
         }
 
         /// <summary>
@@ -413,12 +418,12 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="cart">Shoping cart</param>
         /// <returns>true - hide; false - display.</returns>
-        public bool HidePaymentMethod(IList<ShoppingCartItem> cart)
+        public Task<bool> HidePaymentMethodAsync(IList<ShoppingCartItem> cart)
         {
             //you can put any logic here
             //for example, hide this payment method if all products in the cart are downloadable
             //or hide this payment method if current customer is from certain country
-            return false;
+            return Task.FromResult(false);
         }
 
         /// <summary>
@@ -426,9 +431,9 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="cart">Shoping cart</param>
         /// <returns>Additional handling fee</returns>
-        public decimal GetAdditionalHandlingFee(IList<ShoppingCartItem> cart)
+        public async Task<decimal> GetAdditionalHandlingFeeAsync(IList<ShoppingCartItem> cart)
         {
-            var result = _paymentService.CalculateAdditionalFee(cart,
+            var result = await _paymentService.CalculateAdditionalFeeAsync(cart,
                 _bluePayPaymentSettings.AdditionalFee, _bluePayPaymentSettings.AdditionalFeePercentage);
             return result;
         }
@@ -438,7 +443,7 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="form">The parsed form values</param>
         /// <returns>List of validating errors</returns>
-        public IList<string> ValidatePaymentForm(IFormCollection form)
+        public Task<IList<string>> ValidatePaymentFormAsync(IFormCollection form)
         {
             var warnings = new List<string>();
 
@@ -455,7 +460,7 @@ namespace Nop.Plugin.Payments.BluePay
             if (!validationResult.IsValid)
                 warnings.AddRange(validationResult.Errors.Select(error => error.ErrorMessage));
 
-            return warnings;
+            return Task.FromResult<IList<string>>(warnings);
         }
 
         /// <summary>
@@ -463,15 +468,15 @@ namespace Nop.Plugin.Payments.BluePay
         /// </summary>
         /// <param name="form">The parsed form values</param>
         /// <returns>Payment info holder</returns>
-        public ProcessPaymentRequest GetPaymentInfo(IFormCollection form)
+        public Task<ProcessPaymentRequest> GetPaymentInfoAsync(IFormCollection form)
         {
-            return new ProcessPaymentRequest
+            return Task.FromResult(new ProcessPaymentRequest
             {
                 CreditCardNumber = form["CardNumber"],
                 CreditCardExpireMonth = int.Parse(form["ExpireMonth"]),
                 CreditCardExpireYear = int.Parse(form["ExpireYear"]),
                 CreditCardCvv2 = form["CardCode"]
-            };
+            });
         }
 
         /// <summary>
@@ -494,63 +499,70 @@ namespace Nop.Plugin.Payments.BluePay
         /// <summary>
         /// Install the plugin
         /// </summary>
-        public override void Install()
+        public override async Task InstallAsync()
         {
             //settings
-            _settingService.SaveSetting(new BluePayPaymentSettings
+            await _settingService.SaveSettingAsync(new BluePayPaymentSettings
             {
                 TransactMode = TransactMode.Authorize,
                 UseSandbox = true
             });
 
             //locales
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.AccountId", "Account ID");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.AccountId.Hint", "Specify BluePay account number.");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.AdditionalFee", "Additional fee");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.AdditionalFee.Hint", "Enter additional fee to charge your customers.");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.AdditionalFeePercentage", "Additional fee. Use percentage");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.AdditionalFeePercentage.Hint", "Determines whether to apply a percentage additional fee to the order total. If not enabled, a fixed value is used.");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.SecretKey", "Secret key");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.SecretKey.Hint", "Specify API secret key.");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.TransactMode", "Transaction mode");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.TransactMode.Hint", "Specify transaction mode.");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.UserId", "User ID");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.UserId.Hint", "Specify BluePay user number.");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.UseSandbox", "Use sandbox");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.Fields.UseSandbox.Hint", "Check to enable sandbox (testing environment).");
-            _localizationService.AddOrUpdatePluginLocaleResource("Plugins.Payments.BluePay.PaymentMethodDescription", "Pay by credit / debit card");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AccountId", "Account ID");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AccountId.Hint", "Specify BluePay account number.");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AdditionalFee", "Additional fee");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AdditionalFee.Hint", "Enter additional fee to charge your customers.");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AdditionalFeePercentage", "Additional fee. Use percentage");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AdditionalFeePercentage.Hint", "Determines whether to apply a percentage additional fee to the order total. If not enabled, a fixed value is used.");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.SecretKey", "Secret key");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.SecretKey.Hint", "Specify API secret key.");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.TransactMode", "Transaction mode");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.TransactMode.Hint", "Specify transaction mode.");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.UserId", "User ID");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.UserId.Hint", "Specify BluePay user number.");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.UseSandbox", "Use sandbox");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.Fields.UseSandbox.Hint", "Check to enable sandbox (testing environment).");
+            await _localizationService.AddOrUpdateLocaleResourceAsync("Plugins.Payments.BluePay.PaymentMethodDescription", "Pay by credit / debit card");
 
-            base.Install();
+            await base.InstallAsync();
         }
         
         /// <summary>
         /// Uninstall the plugin
         /// </summary>
-        public override void Uninstall()
+        public override async Task UninstallAsync()
         {
             //settings
-            _settingService.DeleteSetting<BluePayPaymentSettings>();
+            await _settingService.DeleteSettingAsync<BluePayPaymentSettings>();
 
             //locales
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.AccountId");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.AccountId.Hint");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.AdditionalFee");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.AdditionalFee.Hint");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.AdditionalFeePercentage");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.AdditionalFeePercentage.Hint");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.SecretKey");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.SecretKey.Hint");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.TransactMode");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.TransactMode.Hint");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.UserId");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.UserId.Hint");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.UseSandbox");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.Fields.UseSandbox.Hint");
-            _localizationService.DeletePluginLocaleResource("Plugins.Payments.BluePay.PaymentMethodDescription");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AccountId");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AccountId.Hint");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AdditionalFee");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AdditionalFee.Hint");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AdditionalFeePercentage");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.AdditionalFeePercentage.Hint");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.SecretKey");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.SecretKey.Hint");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.TransactMode");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.TransactMode.Hint");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.UserId");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.UserId.Hint");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.UseSandbox");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.Fields.UseSandbox.Hint");
+            await _localizationService.DeleteLocaleResourceAsync("Plugins.Payments.BluePay.PaymentMethodDescription");
 
-            base.Uninstall();
+            await base.UninstallAsync();
         }
 
+        /// <summary>
+        /// Gets a payment method description that will be displayed on checkout pages in the public store
+        /// </summary>
+        public async Task<string> GetPaymentMethodDescriptionAsync()
+        {
+            return await _localizationService.GetResourceAsync("Plugins.Payments.BluePay.PaymentMethodDescription");
+        }
         #endregion
     }
 }

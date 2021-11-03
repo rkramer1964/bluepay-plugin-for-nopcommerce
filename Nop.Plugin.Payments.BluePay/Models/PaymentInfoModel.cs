@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 namespace Nop.Plugin.Payments.BluePay.Models
 {
-    public class PaymentInfoModel : BaseNopModel
+    public record PaymentInfoModel : BaseNopModel
     {
         public PaymentInfoModel()
         {

@@ -20,7 +20,7 @@
                     4. Supply the URL of your rebill handler (http://www.yourStore.com/Plugins/PaymentBluePay/Rebilling) where "Rebilling POST URL" is indicated.<br />
                     <em>Note: Recurring payments is only available to US merchants</em>
                 </p>
-                <div class="form-group">
+                <div class="form-group row">
                     <div class="col-md-3">
                         <nop-override-store-checkbox asp-for="AccountId_OverrideForStore" asp-input="AccountId" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                         <nop-label asp-for="AccountId" />
@@ -30,7 +30,7 @@
                         <span asp-validation-for="AccountId"></span>
                     </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group row">
                     <div class="col-md-3">
                         <nop-override-store-checkbox asp-for="UserId_OverrideForStore" asp-input="UserId" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                         <nop-label asp-for="UserId" />
@@ -40,7 +40,7 @@
                         <span asp-validation-for="UserId"></span>
                     </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group row">
                     <div class="col-md-3">
                         <nop-override-store-checkbox asp-for="SecretKey_OverrideForStore" asp-input="SecretKey" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                         <nop-label asp-for="SecretKey" />
@@ -50,7 +50,7 @@
                         <span asp-validation-for="SecretKey"></span>
                     </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group row">
                     <div class="col-md-3">
                         <nop-override-store-checkbox asp-for="TransactModeId_OverrideForStore" asp-input="TransactModeId" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                         <nop-label asp-for="TransactModeId" />
@@ -59,7 +59,7 @@
                         <nop-select asp-for="TransactModeId" asp-items="Model.TransactModeValues"/>
                     </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group row">
                     <div class="col-md-3">
                         <nop-override-store-checkbox asp-for="UseSandbox_OverrideForStore" asp-input="UseSandbox" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                         <nop-label asp-for="UseSandbox" />
@@ -69,7 +69,7 @@
                         <span asp-validation-for="UseSandbox"></span>
                     </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group row">
                     <div class="col-md-3">
                         <nop-override-store-checkbox asp-for="AdditionalFee_OverrideForStore" asp-input="AdditionalFee" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                         <nop-label asp-for="AdditionalFee" />
@@ -79,7 +79,7 @@
                         <span asp-validation-for="AdditionalFee"></span>
                     </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group row">
                     <div class="col-md-3">
                         <nop-override-store-checkbox asp-for="AdditionalFeePercentage_OverrideForStore" asp-input="AdditionalFeePercentage" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                         <nop-label asp-for="AdditionalFeePercentage" />
@@ -89,7 +89,7 @@
                         <span asp-validation-for="AdditionalFeePercentage"></span>
                     </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group row">
                     <div class="col-md-9 col-md-offset-3">
                         <button type="submit" class="btn btn-primary">
                             @T("Admin.Common.Save")

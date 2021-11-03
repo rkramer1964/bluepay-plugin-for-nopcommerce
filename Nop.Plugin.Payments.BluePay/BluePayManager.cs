@@ -280,14 +280,39 @@ namespace Nop.Plugin.Payments.BluePay
         /// <returns>A hex-encoded md5 checksum</returns>
         private string CalculateTPS(string transactionType, string tamperProofSeal = null)
         {
-            var tps = tamperProofSeal ?? $"{SecretKey}{AccountId}{(IsSandbox ? "TEST" : "LIVE")}{transactionType}{Amount}{MasterId}";
-            
-            var md5 = new MD5CryptoServiceProvider();
-            var hash = md5.ComputeHash(Encoding.Default.GetBytes(tps));
+            string HashType = "HMAC_SHA512"; // make selectable later
+            string hash = string.Empty;
 
-            return BitConverter.ToString(hash).Replace("-", string.Empty);
+            var tps = tamperProofSeal ?? $"{AccountId}{(IsSandbox ? "TEST" : "LIVE")}{transactionType}{Amount}{MasterId}";
+            ASCIIEncoding encode = new ASCIIEncoding();
+
+            if (HashType == "HMAC_SHA512")
+            {
+                byte[] SecretKeyBytes = encode.GetBytes(this.SecretKey);
+                byte[] MessageBytes = encode.GetBytes(tps);
+                var Hmac = new HMACSHA512(SecretKeyBytes);
+                byte[] HashBytes = Hmac.ComputeHash(MessageBytes);
+                hash = ByteArrayToString(HashBytes);
+            }           
+            // var md5 = new MD5CryptoServiceProvider();
+            // var hash = md5.ComputeHash(Encoding.Default.GetBytes(tps));
+
+            //return BitConverter.ToString(hash).Replace("-", string.Empty);
+            return hash;
         }
 
+        //This is used to convert a byte array to a hex string
+        static string ByteArrayToString(byte[] arrInput)
+        {
+            int i;
+            StringBuilder sOutput = new StringBuilder(arrInput.Length);
+            for (i = 0; i < arrInput.Length; i++)
+            {
+                sOutput.Append(arrInput[i].ToString("X2"));
+            }
+            return sOutput.ToString();
+        }
+        
         /// <summary>
         /// Send POST request to BluePay
         /// </summary>

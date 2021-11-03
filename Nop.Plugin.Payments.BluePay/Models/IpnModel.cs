@@ -2,7 +2,7 @@
 
 namespace Nop.Plugin.Payments.BluePay.Models
 {
-    public class IpnModel : BaseNopModel
+    public record IpnModel : BaseNopModel
     {
     }
 }

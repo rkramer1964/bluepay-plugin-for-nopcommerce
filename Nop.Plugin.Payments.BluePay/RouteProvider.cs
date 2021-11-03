@@ -6,11 +6,13 @@ namespace Nop.Plugin.Payments.BluePay
 {
     public partial class RouteProvider : IRouteProvider
     {
-        public void RegisterRoutes(IRouteBuilder routeBuilder)
+        public void RegisterRoutes(IEndpointRouteBuilder endpointRouteBuilder)
         {
-            routeBuilder.MapRoute("Plugin.Payments.BluePay.Rebilling",
+            endpointRouteBuilder.MapControllerRoute(
+                "Plugin.Payments.BluePay.Rebilling",
                  "Plugins/PaymentBluePay/Rebilling",
-                 new { controller = "PaymentBluePay", action = "Rebilling" });
+                 new { controller = "PaymentBluePay", action = "Rebilling" }
+            );
         }
 
         public int Priority

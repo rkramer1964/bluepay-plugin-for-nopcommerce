@@ -4,6 +4,7 @@ using System.Net;
 using Microsoft.AspNetCore.Mvc;
 using Nop.Core;
 using Nop.Core.Domain.Payments;
+using Nop.Core.Domain.Orders;
 using Nop.Plugin.Payments.BluePay.Models;
 using Nop.Services;
 using Nop.Services.Configuration;
@@ -15,6 +16,8 @@ using Nop.Services.Security;
 using Nop.Web.Framework;
 using Nop.Web.Framework.Controllers;
 using Nop.Web.Framework.Mvc.Filters;
+using Nop.Services.Messages;
+using System.Threading.Tasks;
 
 namespace Nop.Plugin.Payments.BluePay.Controllers
 {
@@ -29,7 +32,7 @@ namespace Nop.Plugin.Payments.BluePay.Controllers
         private readonly ISettingService _settingService;
         private readonly IPermissionService _permissionService;
         private readonly IStoreContext _storeContext;
-
+        private readonly INotificationService _notificationService;
         #endregion
 
         #region Ctor
@@ -40,7 +43,8 @@ namespace Nop.Plugin.Payments.BluePay.Controllers
             IOrderService orderService,
             ISettingService settingService,
             IPermissionService permissionService,
-            IStoreContext storeContext)
+            IStoreContext storeContext,
+            INotificationService notificationService)
         {
             this._localizationService = localizationService;
             this._logger = logger;
@@ -49,21 +53,22 @@ namespace Nop.Plugin.Payments.BluePay.Controllers
             this._settingService = settingService;
             this._permissionService = permissionService;
             this._storeContext = storeContext;
+            this._notificationService = notificationService;
         }
 
         #endregion
 
         #region Methods
-
+        [AutoValidateAntiforgeryToken]
         [AuthorizeAdmin]
         [Area(AreaNames.Admin)]
-        public IActionResult Configure()
+        public async Task<IActionResult> Configure()
         {
-            if (!_permissionService.Authorize(StandardPermissionProvider.ManagePaymentMethods))
+            if (!await _permissionService.AuthorizeAsync(StandardPermissionProvider.ManagePaymentMethods))
                 return AccessDeniedView();
 
-            var storeScope = _storeContext.ActiveStoreScopeConfiguration;
-            var bluePayPaymentSettings = _settingService.LoadSetting<BluePayPaymentSettings>(storeScope);
+            var storeScope = await _storeContext.GetActiveStoreScopeConfigurationAsync();
+            var bluePayPaymentSettings = await _settingService.LoadSettingAsync<BluePayPaymentSettings>(storeScope);
 
             var model = new ConfigurationModel
             {
@@ -74,37 +79,38 @@ namespace Nop.Plugin.Payments.BluePay.Controllers
                 SecretKey = bluePayPaymentSettings.SecretKey,
                 AdditionalFee = bluePayPaymentSettings.AdditionalFee,
                 AdditionalFeePercentage = bluePayPaymentSettings.AdditionalFeePercentage,
-                TransactModeValues = bluePayPaymentSettings.TransactMode.ToSelectList(),
+                TransactModeValues = await bluePayPaymentSettings.TransactMode.ToSelectListAsync(),
                 ActiveStoreScopeConfiguration = storeScope
             };
             if (storeScope > 0)
             {
-                model.UseSandbox_OverrideForStore = _settingService.SettingExists(bluePayPaymentSettings, x => x.UseSandbox, storeScope);
-                model.TransactModeId_OverrideForStore = _settingService.SettingExists(bluePayPaymentSettings, x => x.TransactMode, storeScope);
-                model.AccountId_OverrideForStore = _settingService.SettingExists(bluePayPaymentSettings, x => x.AccountId, storeScope);
-                model.UserId_OverrideForStore = _settingService.SettingExists(bluePayPaymentSettings, x => x.UserId, storeScope);
-                model.SecretKey_OverrideForStore = _settingService.SettingExists(bluePayPaymentSettings, x => x.SecretKey, storeScope);
-                model.AdditionalFee_OverrideForStore = _settingService.SettingExists(bluePayPaymentSettings, x => x.AdditionalFee, storeScope);
-                model.AdditionalFeePercentage_OverrideForStore = _settingService.SettingExists(bluePayPaymentSettings, x => x.AdditionalFeePercentage, storeScope);
+                model.UseSandbox_OverrideForStore = await _settingService.SettingExistsAsync(bluePayPaymentSettings, x => x.UseSandbox, storeScope);
+                model.TransactModeId_OverrideForStore = await _settingService.SettingExistsAsync(bluePayPaymentSettings, x => x.TransactMode, storeScope);
+                model.AccountId_OverrideForStore = await _settingService.SettingExistsAsync(bluePayPaymentSettings, x => x.AccountId, storeScope);
+                model.UserId_OverrideForStore = await _settingService.SettingExistsAsync(bluePayPaymentSettings, x => x.UserId, storeScope);
+                model.SecretKey_OverrideForStore = await _settingService.SettingExistsAsync(bluePayPaymentSettings, x => x.SecretKey, storeScope);
+                model.AdditionalFee_OverrideForStore = await _settingService.SettingExistsAsync(bluePayPaymentSettings, x => x.AdditionalFee, storeScope);
+                model.AdditionalFeePercentage_OverrideForStore = await _settingService.SettingExistsAsync(bluePayPaymentSettings, x => x.AdditionalFeePercentage, storeScope);
             }
 
             return View("~/Plugins/Payments.BluePay/Views/Configure.cshtml", model);
         }
 
+        [AutoValidateAntiforgeryToken]
         [HttpPost]
         [AuthorizeAdmin]
         [Area(AreaNames.Admin)]
-        public IActionResult Configure(ConfigurationModel model)
+        public async Task<IActionResult> Configure(ConfigurationModel model)
         {
-            if (!_permissionService.Authorize(StandardPermissionProvider.ManagePaymentMethods))
+            if (!await _permissionService.AuthorizeAsync(StandardPermissionProvider.ManagePaymentMethods))
                 return AccessDeniedView();
 
             if (!ModelState.IsValid)
-                return Configure();
+                return await Configure();
 
             //load settings for a chosen store scope
-            var storeScope = _storeContext.ActiveStoreScopeConfiguration;
-            var bluePayPaymentSettings = _settingService.LoadSetting<BluePayPaymentSettings>(storeScope);
+            var storeScope = await _storeContext.GetActiveStoreScopeConfigurationAsync();
+            var bluePayPaymentSettings = await _settingService.LoadSettingAsync<BluePayPaymentSettings>(storeScope);
 
             //save settings
             bluePayPaymentSettings.UseSandbox = model.UseSandbox;
@@ -118,29 +124,30 @@ namespace Nop.Plugin.Payments.BluePay.Controllers
             /* We do not clear cache after each setting update.
              * This behavior can increase performance because cached settings will not be cleared 
              * and loaded from database after each update */
-            _settingService.SaveSettingOverridablePerStore(bluePayPaymentSettings, x => x.UseSandbox, model.UseSandbox_OverrideForStore, storeScope, false);
-            _settingService.SaveSettingOverridablePerStore(bluePayPaymentSettings, x => x.TransactMode, model.TransactModeId_OverrideForStore, storeScope, false);
-            _settingService.SaveSettingOverridablePerStore(bluePayPaymentSettings, x => x.AccountId, model.AccountId_OverrideForStore, storeScope, false);
-            _settingService.SaveSettingOverridablePerStore(bluePayPaymentSettings, x => x.UserId, model.UserId_OverrideForStore, storeScope, false);
-            _settingService.SaveSettingOverridablePerStore(bluePayPaymentSettings, x => x.SecretKey, model.SecretKey_OverrideForStore, storeScope, false);
-            _settingService.SaveSettingOverridablePerStore(bluePayPaymentSettings, x => x.AdditionalFee, model.AdditionalFee_OverrideForStore, storeScope, false);
-            _settingService.SaveSettingOverridablePerStore(bluePayPaymentSettings, x => x.AdditionalFeePercentage, model.AdditionalFeePercentage_OverrideForStore, storeScope, false);
+            await _settingService.SaveSettingOverridablePerStoreAsync(bluePayPaymentSettings, x => x.UseSandbox, model.UseSandbox_OverrideForStore, storeScope, false);
+            await _settingService.SaveSettingOverridablePerStoreAsync(bluePayPaymentSettings, x => x.TransactMode, model.TransactModeId_OverrideForStore, storeScope, false);
+            await _settingService.SaveSettingOverridablePerStoreAsync(bluePayPaymentSettings, x => x.AccountId, model.AccountId_OverrideForStore, storeScope, false);
+            await _settingService.SaveSettingOverridablePerStoreAsync(bluePayPaymentSettings, x => x.UserId, model.UserId_OverrideForStore, storeScope, false);
+            await _settingService.SaveSettingOverridablePerStoreAsync(bluePayPaymentSettings, x => x.SecretKey, model.SecretKey_OverrideForStore, storeScope, false);
+            await _settingService.SaveSettingOverridablePerStoreAsync(bluePayPaymentSettings, x => x.AdditionalFee, model.AdditionalFee_OverrideForStore, storeScope, false);
+            await _settingService.SaveSettingOverridablePerStoreAsync(bluePayPaymentSettings, x => x.AdditionalFeePercentage, model.AdditionalFeePercentage_OverrideForStore, storeScope, false);
 
             //now clear settings cache
-            _settingService.ClearCache();
+            await _settingService.ClearCacheAsync();
 
-            SuccessNotification(_localizationService.GetResource("Admin.Plugins.Saved"));
+            _notificationService.SuccessNotification(await _localizationService.GetResourceAsync("Admin.Plugins.Saved"));
 
-            return Configure();
+            return await Configure();
         }
-        
-        [HttpPost]
-        public ActionResult Rebilling(IpnModel model)
-        {
-            var parameters = model.Form;
 
-            var storeScope = _storeContext.ActiveStoreScopeConfiguration;
-            var bluePayPaymentSettings = _settingService.LoadSetting<BluePayPaymentSettings>(storeScope);
+        [AutoValidateAntiforgeryToken]
+        [HttpPost]
+        public async Task<ActionResult> Rebilling()
+        {
+            var parameters = Request.Form;
+
+            var storeScope = await _storeContext.GetActiveStoreScopeConfigurationAsync();
+            var bluePayPaymentSettings = await _settingService.LoadSettingAsync<BluePayPaymentSettings>(storeScope);
             var bpManager = new BluePayManager
             {
                 AccountId = bluePayPaymentSettings.AccountId,
@@ -150,25 +157,25 @@ namespace Nop.Plugin.Payments.BluePay.Controllers
 
             if (!bpManager.CheckRebillStamp(parameters))
             {
-                _logger.Error("BluePay recurring error: the response has been tampered with");
+                await _logger.ErrorAsync("BluePay recurring error: the response has been tampered with");
                 return new StatusCodeResult((int)HttpStatusCode.OK);
             }
 
             var authId = bpManager.GetAuthorizationIdByRebillId(parameters["rebill_id"]);
             if (string.IsNullOrEmpty(authId))
             {
-                _logger.Error($"BluePay recurring error: the initial transaction for rebill {parameters["rebill_id"]} was not found");
+                await _logger.ErrorAsync($"BluePay recurring error: the initial transaction for rebill {parameters["rebill_id"]} was not found");
                 return new StatusCodeResult((int)HttpStatusCode.OK);
             }
 
-            var initialOrder = _orderService.GetOrderByAuthorizationTransactionIdAndPaymentMethod(authId, "Payments.BluePay");
+            var initialOrder = await GetOrderByAuthorizationTransactionIdAndPaymentMethodAsync(authId, "Payments.BluePay");
             if (initialOrder == null)
             {
-                _logger.Error($"BluePay recurring error: the initial order with the AuthorizationTransactionId {parameters["rebill_id"]} was not found");
+                await _logger.ErrorAsync($"BluePay recurring error: the initial order with the AuthorizationTransactionId {parameters["rebill_id"]} was not found");
                 return new StatusCodeResult((int)HttpStatusCode.OK);
             }
 
-            var recurringPayment = _orderService.SearchRecurringPayments(initialOrderId: initialOrder.Id).FirstOrDefault();
+            var recurringPayment = (await _orderService.SearchRecurringPaymentsAsync(initialOrderId: initialOrder.Id)).FirstOrDefault();
             var processPaymentResult = new ProcessPaymentResult();
             if (recurringPayment != null)
             {
@@ -177,23 +184,32 @@ namespace Nop.Plugin.Payments.BluePay.Controllers
                     case "expired":
                     case "active":
                         processPaymentResult.NewPaymentStatus = PaymentStatus.Paid;
-                        _orderProcessingService.ProcessNextRecurringPayment(recurringPayment, processPaymentResult);
+                        await _orderProcessingService.ProcessNextRecurringPaymentAsync(recurringPayment, processPaymentResult);
                         break;
                     case "failed":
                     case "error":
                         processPaymentResult.RecurringPaymentFailed = true;
                         processPaymentResult.Errors.Add($"BluePay recurring order {initialOrder.Id} {parameters["status"]}");
-                        _orderProcessingService.ProcessNextRecurringPayment(recurringPayment, processPaymentResult);
+                        await _orderProcessingService.ProcessNextRecurringPaymentAsync(recurringPayment, processPaymentResult);
                         break;
                     case "deleted":
                     case "stopped":
-                        _orderProcessingService.CancelRecurringPayment(recurringPayment);
-                        _logger.Information($"BluePay recurring order {initialOrder.Id} was {parameters["status"]}");
+                        await _orderProcessingService.CancelRecurringPaymentAsync(recurringPayment);
+                        await _logger.InformationAsync($"BluePay recurring order {initialOrder.Id} was {parameters["status"]}");
                         break;
                 }
             }
 
             return new StatusCodeResult((int)HttpStatusCode.OK);
+        }
+
+        private async Task<Order> GetOrderByAuthorizationTransactionIdAndPaymentMethodAsync(string authId, string v)
+        {
+            var order = (await _orderService.SearchOrdersAsync(paymentMethodSystemName: v))
+                .Where(o => o.AuthorizationTransactionId.Equals(authId, StringComparison.InvariantCultureIgnoreCase))
+                .FirstOrDefault();
+
+            return order;
         }
 
         #endregion
